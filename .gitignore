@@ -1,0 +1,48 @@
+# Node
+node_modules/
+
+# Build outputs
+dist/
+build/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env files
+.env
+.env.*
+
+# Vite
+.vite/
+
+# Bun
+bun.lockb
+
+# VSCode
+.vscode/
+
+# Test coverage
+coverage/
+
+# Supabase
+supabase/.temp/
+
+# Misc
+*.local
+*.log
+
+# Ignore Mac system files
+Icon?
+
+# Ignore by default
+*.swp
+*.swo
+
+# Ignore test snapshots
+__snapshots__/
