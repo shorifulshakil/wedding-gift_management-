@@ -1,3 +1,3 @@
-# Welcome to your Lovable project
+# Welcome to Weeding Management Project 
 
 TODO: Document your project here
