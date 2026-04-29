@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
+import { supabase, isSupabaseConfigured } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { AppHeader } from "@/components/AppHeader";
 import { Button } from "@/components/ui/button";
@@ -24,6 +24,20 @@ interface Entry {
   created_at: string;
 }
 
+const DEMO_ENTRIES_KEY = 'wedding_gift_demo_entries';
+
+const getDemoEntries = (): Entry[] => {
+  try {
+    return JSON.parse(localStorage.getItem(DEMO_ENTRIES_KEY) || '[]');
+  } catch {
+    return [];
+  }
+};
+
+const saveDemoEntries = (entries: Entry[]) => {
+  localStorage.setItem(DEMO_ENTRIES_KEY, JSON.stringify(entries));
+};
+
 const entrySchema = z.object({
   guest_name: z.string().trim().min(1, "Guest name required").max(120),
   address: z.string().trim().max(500).optional().or(z.literal("")),
@@ -33,7 +47,7 @@ const entrySchema = z.object({
 });
 
 const Dashboard = () => {
-  const { user } = useAuth();
+  const { user, demoUser } = useAuth();
   const [weddingId, setWeddingId] = useState<string | null>(null);
   const [weddingName, setWeddingName] = useState("");
   const [entries, setEntries] = useState<Entry[]>([]);
@@ -72,7 +86,30 @@ const Dashboard = () => {
   };
 
   useEffect(() => {
-    if (!user) return;
+    if (!user && !demoUser) return;
+    
+    // Demo mode: load from localStorage
+    if (!isSupabaseConfigured) {
+      const demoEntries = getDemoEntries();
+      // Add sample data if empty
+      if (demoEntries.length === 0) {
+        const sampleEntries: Entry[] = [
+          { id: '1', guest_name: 'Aarav Khan', address: 'Dhaka', type: 'money', amount: 5000, gift_description: null, created_at: new Date().toISOString() },
+          { id: '2', guest_name: 'Priya Sharma', address: 'Chittagong', type: 'gift', amount: null, gift_description: 'Saree', created_at: new Date().toISOString() },
+          { id: '3', guest_name: 'Rahim Ali', address: 'Sylhet', type: 'money', amount: 10000, gift_description: null, created_at: new Date().toISOString() },
+        ];
+        saveDemoEntries(sampleEntries);
+        setEntries(sampleEntries);
+      } else {
+        setEntries(demoEntries);
+      }
+      setWeddingName("My Wedding");
+      setLoading(false);
+      return;
+    }
+
+    // Real Supabase mode
+    if (!supabase || !user) return;
     (async () => {
       const { data: weddings } = await supabase
         .from("weddings")
@@ -88,9 +125,13 @@ const Dashboard = () => {
       setLoading(false);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user]);
+  }, [user, demoUser]);
 
   const loadEntries = async () => {
+    if (!isSupabaseConfigured || !supabase) {
+      setEntries(getDemoEntries());
+      return;
+    }
     const { data, error } = await supabase
       .from("guest_entries")
       .select("id, guest_name, address, type, amount, gift_description, created_at")
@@ -101,7 +142,8 @@ const Dashboard = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user || !weddingId) return;
+    if (!user && !demoUser) return;
+    
     const payload = {
       guest_name: guestName,
       address: address || undefined,
@@ -115,6 +157,41 @@ const Dashboard = () => {
     if (type === "gift" && !giftDesc.trim()) { toast.error("Enter a gift description"); return; }
 
     setBusy(true);
+
+    // Demo mode: save to localStorage
+    if (!isSupabaseConfigured) {
+      const currentEntries = getDemoEntries();
+      const newEntry: Entry = {
+        id: editing?.id || Date.now().toString(),
+        guest_name: guestName.trim(),
+        address: address.trim() || null,
+        type,
+        amount: type === "money" ? Number(amount) : null,
+        gift_description: type === "gift" ? giftDesc.trim() : null,
+        created_at: new Date().toISOString(),
+      };
+      
+      let updatedEntries: Entry[];
+      if (editing) {
+        updatedEntries = currentEntries.map(e => e.id === editing.id ? newEntry : e);
+      } else {
+        updatedEntries = [newEntry, ...currentEntries];
+      }
+      saveDemoEntries(updatedEntries);
+      setEntries(updatedEntries);
+      setBusy(false);
+      toast.success(editing ? "Entry updated" : "Entry added");
+      setDialogOpen(false);
+      resetForm();
+      return;
+    }
+
+    // Real Supabase mode
+    if (!supabase || !user || !weddingId) {
+      setBusy(false);
+      return;
+    }
+
     const dbRow = {
       wedding_id: weddingId,
       admin_id: user.id,
@@ -138,6 +215,19 @@ const Dashboard = () => {
 
   const handleDelete = async (id: string) => {
     if (!confirm("Delete this entry?")) return;
+    
+    // Demo mode
+    if (!isSupabaseConfigured) {
+      const currentEntries = getDemoEntries();
+      const updatedEntries = currentEntries.filter(e => e.id !== id);
+      saveDemoEntries(updatedEntries);
+      setEntries(updatedEntries);
+      toast.success("Entry deleted");
+      return;
+    }
+
+    // Real Supabase mode
+    if (!supabase) return;
     const { error } = await supabase.from("guest_entries").delete().eq("id", id);
     if (error) { toast.error(error.message); return; }
     toast.success("Entry deleted");

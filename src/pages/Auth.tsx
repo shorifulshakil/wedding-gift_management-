@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useNavigate, useSearchParams, Link } from "react-router-dom";
 import { z } from "zod";
-import { supabase } from "@/integrations/supabase/client";
+import { supabase, isSupabaseConfigured } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -27,6 +27,23 @@ const loginSchema = z.object({
   password: z.string().min(1).max(72),
 });
 
+// Demo user storage
+const DEMO_USERS_KEY = 'wedding_gift_demo_users';
+
+const getDemoUsers = (): Record<string, { password: string; name: string }> => {
+  try {
+    return JSON.parse(localStorage.getItem(DEMO_USERS_KEY) || '{}');
+  } catch {
+    return {};
+  }
+};
+
+const saveDemoUser = (email: string, password: string, name: string) => {
+  const users = getDemoUsers();
+  users[email.toLowerCase()] = { password, name };
+  localStorage.setItem(DEMO_USERS_KEY, JSON.stringify(users));
+};
+
 const Auth = () => {
   const { user, loading } = useAuth();
   const navigate = useNavigate();
@@ -45,16 +62,40 @@ const Auth = () => {
     const parsed = signupSchema.safeParse(Object.fromEntries(fd));
     if (!parsed.success) { toast.error(parsed.error.issues[0].message); return; }
     setBusy(true);
-    const { error } = await supabase.auth.signUp({
-      email: parsed.data.email,
-      password: parsed.data.password,
-      options: {
-        emailRedirectTo: `${window.location.origin}/dashboard`,
-        data: { name: parsed.data.name, phone: parsed.data.phone, dob: parsed.data.dob },
-      },
-    });
+
+    let error: string | null = null;
+
+    if (isSupabaseConfigured && supabase) {
+      const { error: supabaseError } = await supabase.auth.signUp({
+        email: parsed.data.email,
+        password: parsed.data.password,
+        options: {
+          emailRedirectTo: `${window.location.origin}/dashboard`,
+          data: { name: parsed.data.name, phone: parsed.data.phone, dob: parsed.data.dob },
+        },
+      });
+      error = supabaseError?.message || null;
+    } else {
+      // Demo mode: save user locally
+      const users = getDemoUsers();
+      if (users[parsed.data.email.toLowerCase()]) {
+        error = "An account with this email already exists";
+      } else {
+        saveDemoUser(parsed.data.email, parsed.data.password, parsed.data.name);
+        // Auto-login in demo mode
+        const demoSession = {
+          email: parsed.data.email.toLowerCase(),
+          name: parsed.data.name,
+          demo: true
+        };
+        localStorage.setItem('wedding_gift_demo_session', JSON.stringify(demoSession));
+        // Force auth refresh
+        window.dispatchEvent(new Event('demo-login'));
+      }
+    }
+
     setBusy(false);
-    if (error) { toast.error(error.message); return; }
+    if (error) { toast.error(error); return; }
     toast.success("Account created! You're signed in.");
     navigate("/dashboard");
   };
@@ -65,9 +106,35 @@ const Auth = () => {
     const parsed = loginSchema.safeParse(Object.fromEntries(fd));
     if (!parsed.success) { toast.error(parsed.error.issues[0].message); return; }
     setBusy(true);
-    const { error } = await supabase.auth.signInWithPassword({ email: parsed.data.email, password: parsed.data.password });
+
+    let error: string | null = null;
+
+    if (isSupabaseConfigured && supabase) {
+      const { error: supabaseError } = await supabase.auth.signInWithPassword({ 
+        email: parsed.data.email, 
+        password: parsed.data.password 
+      });
+      error = supabaseError?.message || null;
+    } else {
+      // Demo mode: verify against local storage
+      const users = getDemoUsers();
+      const user = users[parsed.data.email.toLowerCase()];
+      if (!user) {
+        error = "No account found with this email. Create one first!";
+      } else if (user.password !== parsed.data.password) {
+        error = "Incorrect password";
+      } else {
+        // Auto-login in demo mode
+        localStorage.setItem('wedding_gift_demo_session', JSON.stringify({
+          email: parsed.data.email.toLowerCase(),
+          name: user.name,
+          demo: true
+        }));
+      }
+    }
+
     setBusy(false);
-    if (error) { toast.error(error.message); return; }
+    if (error) { toast.error(error); return; }
     navigate("/dashboard");
   };
 
